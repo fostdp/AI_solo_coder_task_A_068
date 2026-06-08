@@ -59,23 +59,25 @@ def _trapmf(x, a, b, c, d):
 
 
 class FuzzyCollisionRisk:
-    def __init__(self):
+    def __init__(self, ema_alpha=0.3):
         self.rules = self._build_rules()
+        self._ema_alpha = ema_alpha
+        self._ema_state = {}
 
     def _dcpa_membership(self, dcpa):
         return {
-            "very_close": _trapmf(dcpa, 0, 0, 200, 300),
-            "close": _trimf(dcpa, 200, 500, 800),
-            "moderate": _trimf(dcpa, 500, 1000, 1500),
-            "far": _trapmf(dcpa, 1000, 3000, 5000, 5000),
+            "very_close": _trapmf(dcpa, 0, 0, 250, 400),
+            "close": _trimf(dcpa, 150, 500, 1000),
+            "moderate": _trimf(dcpa, 600, 1200, 2000),
+            "far": _trapmf(dcpa, 1200, 3000, 5000, 5000),
         }
 
     def _tcpa_membership(self, tcpa):
         return {
-            "imminent": _trapmf(tcpa, 0, 0, 3, 5),
-            "short": _trimf(tcpa, 3, 7, 12),
-            "medium": _trimf(tcpa, 8, 16, 25),
-            "long": _trapmf(tcpa, 20, 60, 120, 120),
+            "imminent": _trapmf(tcpa, 0, 0, 4, 7),
+            "short": _trimf(tcpa, 2, 8, 16),
+            "medium": _trimf(tcpa, 10, 20, 35),
+            "long": _trapmf(tcpa, 25, 60, 120, 120),
         }
 
     def _ship_type_factor(self, ship_type):
@@ -90,16 +92,16 @@ class FuzzyCollisionRisk:
 
     def _ship_type_membership(self, factor):
         return {
-            "high_risk": _trapmf(factor, 0.7, 0.9, 1.0, 1.0),
-            "medium_risk": _trimf(factor, 0.4, 0.6, 0.8),
-            "low_risk": _trapmf(factor, 0.0, 0.0, 0.3, 0.5),
+            "high_risk": _trapmf(factor, 0.6, 0.8, 1.0, 1.0),
+            "medium_risk": _trimf(factor, 0.3, 0.55, 0.8),
+            "low_risk": _trapmf(factor, 0.0, 0.0, 0.3, 0.55),
         }
 
     def _draught_membership(self, draught):
         return {
-            "deep": _trapmf(draught, 10, 15, 30, 30),
-            "medium": _trimf(draught, 5, 7.5, 10),
-            "shallow": _trapmf(draught, 0, 0, 3, 5),
+            "deep": _trapmf(draught, 8, 12, 30, 30),
+            "medium": _trimf(draught, 3, 7, 12),
+            "shallow": _trapmf(draught, 0, 0, 4, 7),
         }
 
     def _risk_membership(self, risk_val):
@@ -138,7 +140,7 @@ class FuzzyCollisionRisk:
             ("moderate", "short", "low_risk", None, "caution"),
         ]
 
-    def evaluate(self, dcpa, tcpa, ship_type="other", draught=5.0):
+    def evaluate(self, dcpa, tcpa, ship_type="other", draught=5.0, mmsi=None):
         dcpa_mf = self._dcpa_membership(dcpa)
         tcpa_mf = self._tcpa_membership(tcpa)
         st_factor = self._ship_type_factor(ship_type)
@@ -157,7 +159,23 @@ class FuzzyCollisionRisk:
 
             output_mf[risk_label] = max(output_mf[risk_label], strength)
 
-        return self._defuzzify(output_mf)
+        raw_score = self._defuzzify(output_mf)
+
+        smoothed_score = self._apply_ema(raw_score, mmsi)
+
+        return smoothed_score
+
+    def _apply_ema(self, raw_score, mmsi=None):
+        if mmsi is None:
+            return raw_score
+        alpha = self._ema_alpha
+        if mmsi in self._ema_state:
+            prev = self._ema_state[mmsi]
+            smoothed = alpha * raw_score + (1 - alpha) * prev
+        else:
+            smoothed = raw_score
+        self._ema_state[mmsi] = smoothed
+        return smoothed
 
     def _defuzzify(self, output_mf, steps=200):
         x_min, x_max = 0.0, 1.0
@@ -178,6 +196,67 @@ class FuzzyCollisionRisk:
         if denominator < 1e-10:
             return 0.0
         return numerator / denominator
+
+    def reset_ema(self, mmsi=None):
+        if mmsi is None:
+            self._ema_state.clear()
+        else:
+            self._ema_state.pop(mmsi, None)
+
+
+_HYSTERESIS_THRESHOLDS = {
+    "safe":      {"up": 0.30, "down": 0.20},
+    "caution":   {"up": 0.50, "down": 0.35},
+    "warning":   {"up": 0.70, "down": 0.55},
+    "danger":    {"up": 0.85, "down": 0.65},
+}
+
+_LEVEL_ORDER = ["safe", "caution", "warning", "danger"]
+_LEVEL_RANK = {lv: i for i, lv in enumerate(_LEVEL_ORDER)}
+
+_previous_levels = {}
+
+
+def _hysteresis_level(score, mmsi=None):
+    if mmsi is None:
+        return _score_to_level(score)
+
+    prev = _previous_levels.get(mmsi, "safe")
+    prev_rank = _LEVEL_RANK[prev]
+
+    new_level = prev
+    if score >= _HYSTERESIS_THRESHOLDS["danger"]["up"]:
+        new_level = "danger"
+    elif score >= _HYSTERESIS_THRESHOLDS["warning"]["up"] and prev_rank >= _LEVEL_RANK["warning"]:
+        new_level = "warning"
+    elif score >= _HYSTERESIS_THRESHOLDS["warning"]["up"] and prev_rank < _LEVEL_RANK["warning"]:
+        if score >= _HYSTERESIS_THRESHOLDS["warning"]["up"]:
+            new_level = "warning"
+    elif score <= _HYSTERESIS_THRESHOLDS["safe"]["down"]:
+        new_level = "safe"
+    elif score <= _HYSTERESIS_THRESHOLDS["caution"]["down"] and prev_rank > _LEVEL_RANK["caution"]:
+        new_level = "caution"
+    elif score <= _HYSTERESIS_THRESHOLDS["warning"]["down"] and prev_rank > _LEVEL_RANK["warning"]:
+        new_level = "warning"
+
+    if new_level == prev:
+        if prev_rank < _LEVEL_RANK["danger"] and score >= _HYSTERESIS_THRESHOLDS[_LEVEL_ORDER[prev_rank + 1]]["up"]:
+            new_level = _LEVEL_ORDER[prev_rank + 1]
+        elif prev_rank > 0 and score <= _HYSTERESIS_THRESHOLDS[_LEVEL_ORDER[prev_rank]]["down"]:
+            new_level = _LEVEL_ORDER[prev_rank - 1]
+
+    _previous_levels[mmsi] = new_level
+    return new_level
+
+
+def _score_to_level(score):
+    if score > 0.7:
+        return "danger"
+    elif score > 0.5:
+        return "warning"
+    elif score > 0.3:
+        return "caution"
+    return "safe"
 
 
 def _haversine_m(lat1, lng1, lat2, lng2):
@@ -219,13 +298,16 @@ def _is_in_restricted_zone(ship_lat, ship_lng, restricted_zones):
     return False
 
 
+_fuzzy_instance = FuzzyCollisionRisk(ema_alpha=0.3)
+
+
 def assess_collision_risk(ship, turbines, restricted_zones=None):
     if restricted_zones is None:
         restricted_zones = []
 
-    fuzzy = FuzzyCollisionRisk()
     ship_type = ship.get("ship_type", "other")
     draught = ship.get("draught", 5.0)
+    mmsi = ship.get("mmsi")
 
     min_dcpa = float("inf")
     min_tcpa = float("inf")
@@ -259,19 +341,13 @@ def assess_collision_risk(ship, turbines, restricted_zones=None):
     if min_tcpa == float("inf"):
         min_tcpa = 0.0
 
-    risk_score = fuzzy.evaluate(min_dcpa, min_tcpa, ship_type, draught)
+    risk_score = _fuzzy_instance.evaluate(min_dcpa, min_tcpa, ship_type, draught, mmsi=mmsi)
 
-    risk_level = "safe"
-    if risk_score > 0.7:
-        risk_level = "danger"
-    elif risk_score > 0.5:
-        risk_level = "warning"
-    elif risk_score > 0.3:
-        risk_level = "caution"
+    risk_level = _hysteresis_level(risk_score, mmsi=mmsi)
 
     if in_restricted:
         risk_score = min(1.0, risk_score + 0.2)
-        if risk_level in ("safe", "caution"):
+        if _LEVEL_RANK[risk_level] < _LEVEL_RANK["warning"]:
             risk_level = "warning"
 
     if est_entry is None and min_tcpa > 0:
@@ -280,7 +356,7 @@ def assess_collision_risk(ship, turbines, restricted_zones=None):
         est_entry = None
 
     return {
-        "mmsi": ship.get("mmsi"),
+        "mmsi": mmsi,
         "risk_score": round(risk_score, 4),
         "risk_level": risk_level,
         "dcpa": round(min_dcpa, 2),

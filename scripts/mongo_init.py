@@ -11,7 +11,7 @@ TURBINE_COUNT = GRID_ROWS * GRID_COLS
 client = MongoClient("localhost", 27017)
 db = client["windfarm_warning"]
 
-collection_names = ["turbines", "cables", "ships", "alerts", "ship_tracks", "restricted_zones", "traffic_logs"]
+collection_names = ["turbines", "cables", "ships", "alerts", "ship_tracks", "restricted_zones", "traffic_logs", "pending_pushes"]
 
 for name in collection_names:
     db.drop_collection(name)

@@ -51,3 +51,7 @@ def get_traffic_logs_collection():
 
 def get_ship_tracks_collection():
     return database["ship_tracks"]
+
+
+def get_pending_pushes_collection():
+    return database["pending_pushes"]

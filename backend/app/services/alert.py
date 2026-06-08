@@ -11,6 +11,11 @@ class AlertLevel(str, Enum):
     LEVEL2_CABLE = "level2_cable"
 
 
+MAX_PUSH_RETRIES = 10
+INITIAL_RETRY_DELAY = 30
+MAX_RETRY_DELAY = 3600
+
+
 class AlertManager:
     MARITIME_CENTER_URL = "https://maritime-center.example.com/api/alerts"
     OM_VESSEL_URL = "https://om-vessel.example.com/api/alerts"
@@ -104,23 +109,92 @@ class AlertManager:
         alert_id = alert["alert_id"]
         results = {"maritime_center": "failed", "om_vessel": "failed"}
 
-        for target, url_key in [("maritime_center", self.MARITIME_CENTER_URL), ("om_vessel", self.OM_VESSEL_URL)]:
+        for target, url in [("maritime_center", self.MARITIME_CENTER_URL), ("om_vessel", self.OM_VESSEL_URL)]:
             try:
-                print(f"[ALERT PUSH] Sending alert {alert_id} to {target} at {url_key}")
-                resp = httpx.post(url_key, json=alert, timeout=5.0)
+                print(f"[ALERT PUSH] Sending alert {alert_id} to {target} at {url}")
+                resp = httpx.post(url, json=alert, timeout=5.0)
                 if resp.status_code < 300:
                     results[target] = "sent"
                     print(f"[ALERT PUSH] Alert {alert_id} delivered to {target} (HTTP {resp.status_code})")
                 else:
                     print(f"[ALERT PUSH] Alert {alert_id} rejected by {target} (HTTP {resp.status_code})")
-            except httpx.HTTPError as exc:
-                print(f"[ALERT PUSH] Alert {alert_id} failed for {target}: {exc}")
+            except (httpx.HTTPError, httpx.TimeoutException, Exception) as exc:
+                print(f"[ALERT PUSH] Alert {alert_id} failed for {target}: {exc}, queuing offline")
+                self._queue_offline(alert_id, target, url, alert)
 
         self.db["alerts"].update_one(
             {"alert_id": alert_id},
             {"$set": {"push_status": results}},
         )
         return results
+
+    def _queue_offline(self, alert_id, channel, url, payload):
+        self.db["pending_pushes"].insert_one({
+            "alert_id": alert_id,
+            "channel": channel,
+            "url": url,
+            "payload": payload,
+            "status": "queued",
+            "retry_count": 0,
+            "max_retries": MAX_PUSH_RETRIES,
+            "created_at": datetime.now(timezone.utc),
+            "next_retry_at": datetime.now(timezone.utc) + timedelta(seconds=INITIAL_RETRY_DELAY),
+        })
+
+    def retry_pending_pushes(self, limit=50):
+        now = datetime.now(timezone.utc)
+        pending = list(self.db["pending_pushes"].find({
+            "status": "queued",
+            "retry_count": {"$lt": MAX_PUSH_RETRIES},
+            "next_retry_at": {"$lte": now},
+        }).limit(limit))
+
+        results = {"resent": 0, "requeued": 0, "exhausted": 0}
+
+        for item in pending:
+            try:
+                resp = httpx.post(item["url"], json=item["payload"], timeout=5.0)
+                if resp.status_code < 300:
+                    self.db["pending_pushes"].update_one(
+                        {"_id": item["_id"]},
+                        {"$set": {"status": "sent", "sent_at": now}},
+                    )
+                    self.db["alerts"].update_one(
+                        {"alert_id": item["alert_id"]},
+                        {"$set": {f"push_status.{item['channel']}": "sent"}},
+                    )
+                    results["resent"] += 1
+                    print(f"[ALERT RETRY] Alert {item['alert_id']} resent to {item['channel']}")
+                else:
+                    raise Exception(f"HTTP {resp.status_code}")
+            except Exception as e:
+                new_retry = item["retry_count"] + 1
+                if new_retry >= MAX_PUSH_RETRIES:
+                    self.db["pending_pushes"].update_one(
+                        {"_id": item["_id"]},
+                        {"$set": {"status": "exhausted", "last_error": str(e)[:100]}},
+                    )
+                    results["exhausted"] += 1
+                else:
+                    delay = min(INITIAL_RETRY_DELAY * (2 ** new_retry), MAX_RETRY_DELAY)
+                    next_time = now + timedelta(seconds=delay)
+                    self.db["pending_pushes"].update_one(
+                        {"_id": item["_id"]},
+                        {"$set": {
+                            "retry_count": new_retry,
+                            "next_retry_at": next_time,
+                            "last_error": str(e)[:100],
+                        }},
+                    )
+                    results["requeued"] += 1
+
+        return results
+
+    def get_offline_queue_stats(self):
+        queued = self.db["pending_pushes"].count_documents({"status": "queued"})
+        sent = self.db["pending_pushes"].count_documents({"status": "sent"})
+        exhausted = self.db["pending_pushes"].count_documents({"status": "exhausted"})
+        return {"queued": queued, "sent": sent, "exhausted": exhausted}
 
     def get_alert_history(self, hours=24):
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
