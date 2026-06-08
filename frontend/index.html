@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>海上风电场海缆保护与船舶碰撞预警系统</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="static/css/style.css" />
+</head>
+<body>
+    <div class="container">
+        <div id="map"></div>
+
+        <div class="right-panel">
+            <div class="panel-header">
+                <h2>海上风电场海缆保护与船舶碰撞预警系统</h2>
+                <div class="ws-status">
+                    <span class="status-dot" id="wsStatusDot"></span>
+                    <span id="wsStatusText">连接中...</span>
+                </div>
+            </div>
+
+            <div class="status-section">
+                <div class="status-card">
+                    <span class="status-label">实时船舶数</span>
+                    <span class="status-value" id="shipCount">0</span>
+                </div>
+                <div class="status-card">
+                    <span class="status-label">高风险</span>
+                    <span class="status-value risk-high" id="riskHigh">0</span>
+                </div>
+                <div class="status-card">
+                    <span class="status-label">中风险</span>
+                    <span class="status-value risk-medium" id="riskMedium">0</span>
+                </div>
+                <div class="status-card">
+                    <span class="status-label">低风险</span>
+                    <span class="status-value risk-low" id="riskLow">0</span>
+                </div>
+            </div>
+
+            <div class="alert-section">
+                <div class="section-title">
+                    <h3>实时预警</h3>
+                    <button class="btn-heatmap-toggle" id="btnHeatmap">24h航迹热力图</button>
+                </div>
+                <div class="alert-list" id="alertList">
+                    <div class="alert-empty">暂无预警信息</div>
+                </div>
+            </div>
+
+            <div class="stats-section" id="statsSection">
+                <h3>月度统计</h3>
+                <div class="stats-cards" id="statsCards"></div>
+                <canvas id="statsChart" width="300" height="150"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="ship-info-panel" id="shipInfoPanel">
+        <div class="ship-info-header">
+            <h3>船舶详情</h3>
+            <button class="btn-close" id="btnCloseShipInfo">&times;</button>
+        </div>
+        <div class="ship-info-body" id="shipInfoBody">
+            <div class="info-row">
+                <span class="info-label">MMSI</span>
+                <span class="info-value" id="infoMmsi">-</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">船速</span>
+                <span class="info-value" id="infoSpeed">-</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">航向</span>
+                <span class="info-value" id="infoCourse">-</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">吃水</span>
+                <span class="info-value" id="infoDraught">-</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">船舶类型</span>
+                <span class="info-value" id="infoShipType">-</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">航行状态</span>
+                <span class="info-value" id="infoNavStatus">-</span>
+            </div>
+            <div class="info-divider"></div>
+            <div class="info-row">
+                <span class="info-label">风险等级</span>
+                <span class="info-value" id="infoRiskLevel">-</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">风险评分</span>
+                <span class="info-value" id="infoRiskScore">-</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">DCPA</span>
+                <span class="info-value" id="infoDcpa">-</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">TCPA</span>
+                <span class="info-value" id="infoTcpa">-</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">预计进入限制区</span>
+                <span class="info-value" id="infoEta">-</span>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+    <script src="static/js/map.js"></script>
+    <script src="static/js/alerts.js"></script>
+    <script src="static/js/heatmap.js"></script>
+    <script src="static/js/stats.js"></script>
+    <script src="static/js/app.js"></script>
+</body>
+</html>
