@@ -1,6 +1,41 @@
 import math
+import os
+from collections import defaultdict
+from pathlib import Path
+
+import yaml
 
 EARTH_RADIUS_M = 6371000.0
+GRID_CELL_SIZE = 0.01
+
+
+class SpatialGridIndex:
+    def __init__(self, cell_size=GRID_CELL_SIZE):
+        self._cell_size = cell_size
+        self._grid = defaultdict(list)
+
+    def insert(self, item, lat_key="lat", lng_key="lng"):
+        ci = int(item.get(lat_key, 0) / self._cell_size)
+        cj = int(item.get(lng_key, 0) / self._cell_size)
+        self._grid[(ci, cj)].append(item)
+
+    def query_nearby(self, lat, lng, radius_cells=2):
+        ci = int(lat / self._cell_size)
+        cj = int(lng / self._cell_size)
+        result = []
+        for di in range(-radius_cells, radius_cells + 1):
+            for dj in range(-radius_cells, radius_cells + 1):
+                result.extend(self._grid.get((ci + di, cj + dj), []))
+        return result
+
+_CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "fuzzy_rules.yaml"
+
+
+def _load_fuzzy_config(path=None):
+    if path is None:
+        path = _CONFIG_PATH
+    with open(path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
 
 
 def _latlng_to_meters(lat1, lng1, lat2, lng2):
@@ -58,87 +93,49 @@ def _trapmf(x, a, b, c, d):
     return (d - x) / (d - c) if d != c else 0.0
 
 
+def _apply_mf(x, mf_def):
+    mf_type = mf_def["type"]
+    params = mf_def["params"]
+    if mf_type == "tri":
+        return _trimf(x, *params)
+    elif mf_type == "trap":
+        return _trapmf(x, *params)
+    return 0.0
+
+
 class FuzzyCollisionRisk:
-    def __init__(self, ema_alpha=0.3):
-        self.rules = self._build_rules()
-        self._ema_alpha = ema_alpha
+    def __init__(self, config_path=None, ema_alpha=None):
+        self._config = _load_fuzzy_config(config_path)
+        self._dcpa_defs = self._config["dcpa"]
+        self._tcpa_defs = self._config["tcpa"]
+        self._ship_type_section = self._config["ship_type"]
+        self._draught_defs = self._config["draught"]
+        self._risk_defs = self._config["risk_output"]
+        self._rules = [tuple(r) for r in self._config["rules"]]
+        alpha = ema_alpha if ema_alpha is not None else self._config.get("ema_alpha", 0.3)
+        self._ema_alpha = alpha
         self._ema_state = {}
+        self._defuzzify_steps = self._config.get("defuzzify_steps", 200)
 
     def _dcpa_membership(self, dcpa):
-        return {
-            "very_close": _trapmf(dcpa, 0, 0, 250, 400),
-            "close": _trimf(dcpa, 150, 500, 1000),
-            "moderate": _trimf(dcpa, 600, 1200, 2000),
-            "far": _trapmf(dcpa, 1200, 3000, 5000, 5000),
-        }
+        return {label: _apply_mf(dcpa, mf_def) for label, mf_def in self._dcpa_defs.items()}
 
     def _tcpa_membership(self, tcpa):
-        return {
-            "imminent": _trapmf(tcpa, 0, 0, 4, 7),
-            "short": _trimf(tcpa, 2, 8, 16),
-            "medium": _trimf(tcpa, 10, 20, 35),
-            "long": _trapmf(tcpa, 25, 60, 120, 120),
-        }
+        return {label: _apply_mf(tcpa, mf_def) for label, mf_def in self._tcpa_defs.items()}
 
     def _ship_type_factor(self, ship_type):
-        mapping = {
-            "tanker": 0.9,
-            "passenger": 0.8,
-            "cargo": 0.6,
-            "fishing": 0.4,
-            "tug": 0.3,
-        }
-        return mapping.get(ship_type, 0.2)
+        mapping = self._ship_type_section.get("mapping", {})
+        return mapping.get(ship_type, mapping.get("other", 0.2))
 
     def _ship_type_membership(self, factor):
-        return {
-            "high_risk": _trapmf(factor, 0.6, 0.8, 1.0, 1.0),
-            "medium_risk": _trimf(factor, 0.3, 0.55, 0.8),
-            "low_risk": _trapmf(factor, 0.0, 0.0, 0.3, 0.55),
-        }
+        defs = {k: v for k, v in self._ship_type_section.items() if k != "mapping"}
+        return {label: _apply_mf(factor, mf_def) for label, mf_def in defs.items()}
 
     def _draught_membership(self, draught):
-        return {
-            "deep": _trapmf(draught, 8, 12, 30, 30),
-            "medium": _trimf(draught, 3, 7, 12),
-            "shallow": _trapmf(draught, 0, 0, 4, 7),
-        }
+        return {label: _apply_mf(draught, mf_def) for label, mf_def in self._draught_defs.items()}
 
     def _risk_membership(self, risk_val):
-        return {
-            "safe": _trapmf(risk_val, 0, 0, 0.15, 0.3),
-            "caution": _trimf(risk_val, 0.2, 0.4, 0.6),
-            "warning": _trimf(risk_val, 0.5, 0.65, 0.8),
-            "danger": _trapmf(risk_val, 0.7, 0.85, 1.0, 1.0),
-        }
-
-    def _build_rules(self):
-        return [
-            ("very_close", "imminent", "high_risk", "deep", "danger"),
-            ("very_close", "imminent", None, None, "danger"),
-            ("very_close", "short", "high_risk", None, "danger"),
-            ("very_close", "short", None, None, "danger"),
-            ("close", "imminent", "high_risk", "deep", "danger"),
-            ("close", "imminent", None, None, "danger"),
-            ("close", "short", "high_risk", None, "warning"),
-            ("close", "short", None, None, "warning"),
-            ("moderate", "imminent", "high_risk", None, "warning"),
-            ("moderate", "imminent", None, None, "warning"),
-            ("moderate", "short", None, None, "caution"),
-            ("far", "imminent", None, None, "caution"),
-            ("far", "short", None, None, "safe"),
-            ("very_close", "medium", "high_risk", "deep", "warning"),
-            ("very_close", "medium", None, None, "caution"),
-            ("very_close", "long", None, None, "caution"),
-            ("close", "medium", "high_risk", None, "caution"),
-            ("close", "medium", None, None, "caution"),
-            ("close", "long", None, None, "safe"),
-            ("moderate", "medium", None, None, "caution"),
-            ("moderate", "long", None, None, "safe"),
-            ("far", "medium", None, None, "safe"),
-            ("far", "long", None, None, "safe"),
-            ("moderate", "short", "low_risk", None, "caution"),
-        ]
+        return {label: _apply_mf(risk_val, mf_def) for label, mf_def in self._risk_defs.items()}
 
     def evaluate(self, dcpa, tcpa, ship_type="other", draught=5.0, mmsi=None):
         dcpa_mf = self._dcpa_membership(dcpa)
@@ -147,17 +144,17 @@ class FuzzyCollisionRisk:
         st_mf = self._ship_type_membership(st_factor)
         dr_mf = self._draught_membership(draught)
 
-        output_mf = {"safe": 0.0, "caution": 0.0, "warning": 0.0, "danger": 0.0}
+        output_mf = {label: 0.0 for label in self._risk_defs}
 
-        for dcpa_label, tcpa_label, st_label, dr_label, risk_label in self.rules:
-            strength = dcpa_mf[dcpa_label] * tcpa_mf[tcpa_label]
+        for dcpa_label, tcpa_label, st_label, dr_label, risk_label in self._rules:
+            strength = dcpa_mf.get(dcpa_label, 0) * tcpa_mf.get(tcpa_label, 0)
 
             if st_label is not None:
-                strength *= st_mf[st_label]
+                strength *= st_mf.get(st_label, 0)
             if dr_label is not None:
-                strength *= dr_mf[dr_label]
+                strength *= dr_mf.get(dr_label, 0)
 
-            output_mf[risk_label] = max(output_mf[risk_label], strength)
+            output_mf[risk_label] = max(output_mf.get(risk_label, 0), strength)
 
         raw_score = self._defuzzify(output_mf)
 
@@ -177,7 +174,9 @@ class FuzzyCollisionRisk:
         self._ema_state[mmsi] = smoothed
         return smoothed
 
-    def _defuzzify(self, output_mf, steps=200):
+    def _defuzzify(self, output_mf, steps=None):
+        if steps is None:
+            steps = self._defuzzify_steps
         x_min, x_max = 0.0, 1.0
         step_size = (x_max - x_min) / steps
         numerator = 0.0
@@ -188,7 +187,7 @@ class FuzzyCollisionRisk:
             risk_mf = self._risk_membership(x)
             clipped = {}
             for label, degree in output_mf.items():
-                clipped[label] = min(degree, risk_mf[label])
+                clipped[label] = min(degree, risk_mf.get(label, 0))
             agg = max(clipped.values())
             numerator += x * agg
             denominator += agg
@@ -204,12 +203,17 @@ class FuzzyCollisionRisk:
             self._ema_state.pop(mmsi, None)
 
 
-_HYSTERESIS_THRESHOLDS = {
-    "safe":      {"up": 0.30, "down": 0.20},
-    "caution":   {"up": 0.50, "down": 0.35},
-    "warning":   {"up": 0.70, "down": 0.55},
-    "danger":    {"up": 0.85, "down": 0.65},
-}
+def _load_hysteresis(config_path=None):
+    config = _load_fuzzy_config(config_path)
+    return config.get("hysteresis", {
+        "safe": {"up": 0.30, "down": 0.20},
+        "caution": {"up": 0.50, "down": 0.35},
+        "warning": {"up": 0.70, "down": 0.55},
+        "danger": {"up": 0.85, "down": 0.65},
+    })
+
+
+_HYSTERESIS_THRESHOLDS = _load_hysteresis()
 
 _LEVEL_ORDER = ["safe", "caution", "warning", "danger"]
 _LEVEL_RANK = {lv: i for i, lv in enumerate(_LEVEL_ORDER)}
@@ -230,8 +234,7 @@ def _hysteresis_level(score, mmsi=None):
     elif score >= _HYSTERESIS_THRESHOLDS["warning"]["up"] and prev_rank >= _LEVEL_RANK["warning"]:
         new_level = "warning"
     elif score >= _HYSTERESIS_THRESHOLDS["warning"]["up"] and prev_rank < _LEVEL_RANK["warning"]:
-        if score >= _HYSTERESIS_THRESHOLDS["warning"]["up"]:
-            new_level = "warning"
+        new_level = "warning"
     elif score <= _HYSTERESIS_THRESHOLDS["safe"]["down"]:
         new_level = "safe"
     elif score <= _HYSTERESIS_THRESHOLDS["caution"]["down"] and prev_rank > _LEVEL_RANK["caution"]:
@@ -298,7 +301,19 @@ def _is_in_restricted_zone(ship_lat, ship_lng, restricted_zones):
     return False
 
 
-_fuzzy_instance = FuzzyCollisionRisk(ema_alpha=0.3)
+_fuzzy_instance = FuzzyCollisionRisk()
+
+
+def _load_collision_warning_config(config_path=None):
+    config = _load_fuzzy_config(config_path)
+    return config.get("collision_warning", {
+        "dcpa_threshold": 500,
+        "tcpa_threshold": 10,
+        "risk_score_threshold": 0.7,
+    })
+
+
+_COLLISION_WARNING_CFG = _load_collision_warning_config()
 
 
 def assess_collision_risk(ship, turbines, restricted_zones=None):
@@ -368,8 +383,11 @@ def assess_collision_risk(ship, turbines, restricted_zones=None):
 
 
 def check_collision_warning(risk_assessment):
-    if risk_assessment["dcpa"] < 500 and risk_assessment["tcpa"] < 10:
+    dcpa_thr = _COLLISION_WARNING_CFG["dcpa_threshold"]
+    tcpa_thr = _COLLISION_WARNING_CFG["tcpa_threshold"]
+    score_thr = _COLLISION_WARNING_CFG["risk_score_threshold"]
+    if risk_assessment["dcpa"] < dcpa_thr and risk_assessment["tcpa"] < tcpa_thr:
         return True
-    if risk_assessment["risk_score"] > 0.7:
+    if risk_assessment["risk_score"] > score_thr:
         return True
     return False

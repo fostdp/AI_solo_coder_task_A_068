@@ -1,0 +1,119 @@
+dcpa:
+  very_close:
+    type: trap
+    params: [0, 0, 250, 400]
+  close:
+    type: tri
+    params: [150, 500, 1000]
+  moderate:
+    type: tri
+    params: [600, 1200, 2000]
+  far:
+    type: trap
+    params: [1200, 3000, 5000, 5000]
+
+tcpa:
+  imminent:
+    type: trap
+    params: [0, 0, 4, 7]
+  short:
+    type: tri
+    params: [2, 8, 16]
+  medium:
+    type: tri
+    params: [10, 20, 35]
+  long:
+    type: trap
+    params: [25, 60, 120, 120]
+
+ship_type:
+  mapping:
+    tanker: 0.9
+    passenger: 0.8
+    cargo: 0.6
+    fishing: 0.4
+    tug: 0.3
+    other: 0.2
+  high_risk:
+    type: trap
+    params: [0.6, 0.8, 1.0, 1.0]
+  medium_risk:
+    type: tri
+    params: [0.3, 0.55, 0.8]
+  low_risk:
+    type: trap
+    params: [0.0, 0.0, 0.3, 0.55]
+
+draught:
+  deep:
+    type: trap
+    params: [8, 12, 30, 30]
+  medium:
+    type: tri
+    params: [3, 7, 12]
+  shallow:
+    type: trap
+    params: [0, 0, 4, 7]
+
+risk_output:
+  safe:
+    type: trap
+    params: [0, 0, 0.15, 0.3]
+  caution:
+    type: tri
+    params: [0.2, 0.4, 0.6]
+  warning:
+    type: tri
+    params: [0.5, 0.65, 0.8]
+  danger:
+    type: trap
+    params: [0.7, 0.85, 1.0, 1.0]
+
+rules:
+  - [very_close, imminent, high_risk, deep, danger]
+  - [very_close, imminent, null, null, danger]
+  - [very_close, short, high_risk, null, danger]
+  - [very_close, short, null, null, danger]
+  - [close, imminent, high_risk, deep, danger]
+  - [close, imminent, null, null, danger]
+  - [close, short, high_risk, null, warning]
+  - [close, short, null, null, warning]
+  - [moderate, imminent, high_risk, null, warning]
+  - [moderate, imminent, null, null, warning]
+  - [moderate, short, null, null, caution]
+  - [far, imminent, null, null, caution]
+  - [far, short, null, null, safe]
+  - [very_close, medium, high_risk, deep, warning]
+  - [very_close, medium, null, null, caution]
+  - [very_close, long, null, null, caution]
+  - [close, medium, high_risk, null, caution]
+  - [close, medium, null, null, caution]
+  - [close, long, null, null, safe]
+  - [moderate, medium, null, null, caution]
+  - [moderate, long, null, null, safe]
+  - [far, medium, null, null, safe]
+  - [far, long, null, null, safe]
+  - [moderate, short, low_risk, null, caution]
+
+hysteresis:
+  safe:
+    up: 0.30
+    down: 0.20
+  caution:
+    up: 0.50
+    down: 0.35
+  warning:
+    up: 0.70
+    down: 0.55
+  danger:
+    up: 0.85
+    down: 0.65
+
+ema_alpha: 0.3
+
+defuzzify_steps: 200
+
+collision_warning:
+  dcpa_threshold: 500
+  tcpa_threshold: 10
+  risk_score_threshold: 0.7

@@ -20,7 +20,7 @@ const HeatmapModule = {
         if (!data) return;
 
         if (this.heatLayer) {
-            MapModule.map.removeLayer(this.heatLayer);
+            WindfarmMap.map.removeLayer(this.heatLayer);
         }
 
         const positions = data.positions || data;
@@ -48,7 +48,7 @@ const HeatmapModule = {
         });
 
         if (this.isVisible) {
-            this.heatLayer.addTo(MapModule.map);
+            this.heatLayer.addTo(WindfarmMap.map);
         }
     },
 
@@ -63,7 +63,7 @@ const HeatmapModule = {
         } else {
             this.stopAutoRefresh();
             if (this.heatLayer) {
-                MapModule.map.removeLayer(this.heatLayer);
+                WindfarmMap.map.removeLayer(this.heatLayer);
                 this.heatLayer = null;
             }
         }

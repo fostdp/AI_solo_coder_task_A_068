@@ -15,6 +15,7 @@ from app.database import (
     get_ship_tracks_collection,
 )
 from app.models.schemas import AISMessage, ShipData
+from app.redis import xadd, STREAM_AIS_RAW
 
 router = APIRouter(prefix="/api")
 
@@ -178,36 +179,23 @@ async def get_traffic_stats():
 
 @router.post("/ais-data")
 async def receive_ais_data(message: AISMessage):
-    ships_col = get_ships_collection()
-    tracks_col = get_ship_tracks_collection()
-    logs_col = get_traffic_logs_collection()
+    now_iso = datetime.utcnow().isoformat()
     for ship in message.ships:
         ship_dict = ship.model_dump()
-        ship_dict["updated_at"] = datetime.utcnow()
-        await ships_col.update_one(
-            {"mmsi": ship.mmsi},
-            {"$set": ship_dict},
-            upsert=True,
-        )
-        track_entry = {
+        msg = {
             "mmsi": ship.mmsi,
             "lat": ship.lat,
             "lng": ship.lng,
             "speed": ship.speed,
             "course": ship.course,
-            "timestamp": datetime.utcnow(),
+            "draught": ship.draught,
+            "ship_type": ship.ship_type,
+            "nav_status": ship.nav_status,
+            "scour_depth": ship.scour_depth,
             "source": message.turbine_id,
+            "timestamp": now_iso,
         }
-        await tracks_col.insert_one(track_entry)
-    await logs_col.insert_one(
-        {
-            "timestamp": datetime.utcnow(),
-            "ship_count": len(message.ships),
-            "ships": [s.model_dump() for s in message.ships],
-            "source": message.turbine_id,
-        }
-    )
-    await broadcast_ship_update()
+        await xadd(STREAM_AIS_RAW, msg)
     return {"status": "ok", "ships_processed": len(message.ships)}
 
 

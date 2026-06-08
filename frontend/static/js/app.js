@@ -18,7 +18,8 @@ const App = {
     selectedShip: null,
 
     init() {
-        MapModule.init(this.handleShipClick.bind(this));
+        WindfarmMap.init();
+        VesselPanel.init(this.handleShipClick.bind(this));
         this.connectWebSocket();
         this.loadInitialData();
         this.startPeriodicRefresh();
@@ -114,9 +115,9 @@ const App = {
             this.data.alerts = alerts || [];
             this.data.riskAssessments = risk || [];
 
-            MapModule.drawTurbines(this.data.turbines);
-            MapModule.drawCables(this.data.cables);
-            MapModule.drawRestrictedZones(this.data.restrictedZones);
+            WindfarmMap.drawTurbines(this.data.turbines);
+            WindfarmMap.drawCables(this.data.cables);
+            WindfarmMap.drawRestrictedZones(this.data.restrictedZones);
             this.renderShips();
             AlertsModule.updateAlertList(this.data.alerts);
         } catch (e) {
@@ -156,9 +157,9 @@ const App = {
     },
 
     renderShips() {
-        MapModule.drawShips(this.data.ships, this.data.riskAssessments);
-        MapModule.drawCollisionVectors(this.data.riskAssessments);
-        MapModule.updateShipPositions(this.data.ships);
+        VesselPanel.drawShips(this.data.ships, this.data.riskAssessments);
+        WindfarmMap.drawCollisionVectors(this.data.riskAssessments);
+        VesselPanel.updateShipPositions(this.data.ships);
         this.updateRiskSummary();
         document.getElementById('shipCount').textContent = this.data.ships.length;
 
@@ -166,7 +167,7 @@ const App = {
             const updated = this.data.ships.find(s => s.mmsi === this.selectedShip.mmsi);
             const risk = this.data.riskAssessments.find(r => r.mmsi === this.selectedShip.mmsi);
             if (updated) {
-                AlertsModule.showShipInfo(updated, risk);
+                VesselPanel.showShipInfo(updated, risk);
             }
         }
     },
@@ -197,14 +198,14 @@ const App = {
     handleShipClick(ship) {
         this.selectedShip = ship;
         const risk = this.data.riskAssessments.find(r => r.mmsi === ship.mmsi);
-        AlertsModule.showShipInfo(ship, risk);
+        VesselPanel.showShipInfo(ship, risk);
     },
 
     bindUIEvents() {
         document.getElementById('btnCloseShipInfo').addEventListener('click', () => {
             document.getElementById('shipInfoPanel').classList.remove('visible');
             this.selectedShip = null;
-            MapModule.clearSelection();
+            VesselPanel.clearSelection();
         });
 
         document.getElementById('btnHeatmap').addEventListener('click', () => {

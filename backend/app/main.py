@@ -1,6 +1,5 @@
 import asyncio
 import json
-import os
 from datetime import datetime
 from pathlib import Path
 
@@ -11,8 +10,12 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.database import connect_to_mongo, close_mongo_connection, get_database
+from app.redis import get_redis, close_redis
 from app.routes.api import router as api_router
-from app.services.mqtt_handler import MQTTHandler
+from app.services.ais_ingestor import AISIngestor
+from app.services.collision_evaluator import CollisionEvaluator
+from app.services.anchor_guard import AnchorGuard
+from app.services.alarm_router import AlarmRouter
 
 app = FastAPI(title="海上风电场海缆保护与船舶碰撞预警系统")
 
@@ -26,22 +29,41 @@ app.add_middleware(
 
 app.include_router(api_router)
 
-mqtt_handler = MQTTHandler()
+ais_ingestor = AISIngestor()
+collision_evaluator = CollisionEvaluator()
+anchor_guard = AnchorGuard()
+alarm_router = AlarmRouter()
 
 ws_clients = []
+
+_evaluator_task = None
+_anchor_task = None
+_alarm_task = None
 
 
 @app.on_event("startup")
 async def startup_event():
+    global _evaluator_task, _anchor_task, _alarm_task
     await connect_to_mongo()
+    await get_redis()
+
     loop = asyncio.get_event_loop()
-    mqtt_handler.start(loop)
+    await ais_ingestor.start(loop)
+
+    _evaluator_task = asyncio.create_task(collision_evaluator.start())
+    _anchor_task = asyncio.create_task(anchor_guard.start())
+    _alarm_task = asyncio.create_task(alarm_router.start())
+
     asyncio.create_task(broadcast_loop())
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    mqtt_handler.stop()
+    collision_evaluator.stop()
+    anchor_guard.stop()
+    alarm_router.stop()
+    ais_ingestor.stop()
+    await close_redis()
     await close_mongo_connection()
 
 

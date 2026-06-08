@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     MONGO_DB: str = "windfarm_warning"
     MQTT_HOST: str = "localhost"
     MQTT_PORT: int = 1883
+    REDIS_URL: str = "redis://localhost:6379/0"
     SATELLITE_PUSH_URL_MARITIME: str = "http://localhost:8001/api/maritime/alert"
     SATELLITE_PUSH_URL_VESSEL: str = "http://localhost:8001/api/vessel/alert"
     CORS_ORIGINS: List[str] = ["*"]

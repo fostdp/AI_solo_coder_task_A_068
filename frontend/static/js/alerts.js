@@ -52,38 +52,6 @@ const AlertsModule = {
         StatsModule.renderStats(stats);
     },
 
-    showShipInfo(ship, risk) {
-        const panel = document.getElementById('shipInfoPanel');
-        panel.classList.add('visible');
-
-        document.getElementById('infoMmsi').textContent = ship.mmsi || '-';
-        document.getElementById('infoSpeed').textContent = ship.speed != null ? (ship.speed + ' kn') : '-';
-        document.getElementById('infoCourse').textContent = ship.course != null ? (ship.course + '°') : '-';
-        document.getElementById('infoDraught').textContent = ship.draught != null ? (ship.draught + ' m') : '-';
-        document.getElementById('infoShipType').textContent = this.formatShipType(ship.ship_type);
-        document.getElementById('infoNavStatus').textContent = this.formatNavStatus(ship.nav_status);
-
-        if (risk) {
-            const levelEl = document.getElementById('infoRiskLevel');
-            levelEl.textContent = this.formatRiskLevel(risk.risk_level);
-            levelEl.className = 'info-value risk-' + (risk.risk_level || 'safe');
-
-            const score = risk.risk_score;
-            document.getElementById('infoRiskScore').textContent = score != null ? (score > 1 ? score.toFixed(0) : (score * 100).toFixed(1) + '%') : '-';
-            document.getElementById('infoDcpa').textContent = risk.dcpa != null ? (risk.dcpa.toFixed(0) + ' m') : '-';
-            document.getElementById('infoTcpa').textContent = risk.tcpa != null ? (risk.tcpa.toFixed(1) + ' min') : '-';
-            document.getElementById('infoEta').textContent = risk.estimated_entry_time != null ? this.formatEta(risk.estimated_entry_time) : '-';
-        } else {
-            const levelEl = document.getElementById('infoRiskLevel');
-            levelEl.textContent = '安全';
-            levelEl.className = 'info-value risk-safe';
-            document.getElementById('infoRiskScore').textContent = '-';
-            document.getElementById('infoDcpa').textContent = '-';
-            document.getElementById('infoTcpa').textContent = '-';
-            document.getElementById('infoEta').textContent = '-';
-        }
-    },
-
     playAlertSound(level) {
         try {
             const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -123,53 +91,5 @@ const AlertsModule = {
         const d = new Date(ts);
         const pad = n => String(n).padStart(2, '0');
         return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
-    },
-
-    formatShipType(type) {
-        const map = {
-            cargo: '货船',
-            tanker: '油轮',
-            passenger: '客船',
-            fishing: '渔船',
-            tug: '拖船',
-            other: '其他'
-        };
-        return map[type] || type || '-';
-    },
-
-    formatNavStatus(status) {
-        if (status == null) return '-';
-        const map = {
-            under_way: '航行中',
-            at_anchor: '锚泊',
-            not_under_command: '不受指挥',
-            restricted_manoeuvrability: '机动受限',
-            0: '航行中',
-            1: '锚泊',
-            2: '不受指挥',
-            3: '机动受限',
-        };
-        return map[status] || ('状态 ' + status);
-    },
-
-    formatRiskLevel(level) {
-        const map = {
-            safe: '安全',
-            caution: '注意',
-            warning: '警告',
-            danger: '危险',
-            low: '安全',
-            medium: '注意',
-            high: '危险'
-        };
-        return map[level] || level || '-';
-    },
-
-    formatEta(minutes) {
-        if (minutes == null) return '-';
-        if (minutes < 0) return '已进入';
-        if (minutes < 1) return '即将进入';
-        if (minutes < 60) return Math.round(minutes) + ' 分钟';
-        return (minutes / 60).toFixed(1) + ' 小时';
     }
 };
