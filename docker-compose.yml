@@ -1,0 +1,116 @@
+version: "3.8"
+
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: windfarm-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: windfarm_warning
+    volumes:
+      - mongo_data:/data/db
+    command: mongod --replSet rs0 --bind_ip_all
+    healthcheck:
+      test: echo 'rs.initiate({_id:"rs0",members:[{_id:0,host:"mongodb:27017"}]})' | mongosh --quiet || true
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  mongo-init:
+    image: python:3.11-slim
+    container_name: windfarm-mongo-init
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    volumes:
+      - ./scripts/mongo_init_docker.py:/app/init.py
+      - ./scripts/mongo_init.py:/app/init_local.py
+    environment:
+      - MONGO_HOST=mongodb
+    command: >
+      bash -c "pip install --quiet pymongo && python /app/init.py"
+    restart: "no"
+
+  redis:
+    image: redis:7-alpine
+    container_name: windfarm-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: windfarm-mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: windfarm-api
+    restart: unless-stopped
+    expose:
+      - "8000"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      mosquitto:
+        condition: service_started
+    environment:
+      - MONGO_URI=mongodb://mongodb:27017
+      - MONGO_DB=windfarm_warning
+      - MQTT_HOST=mosquitto
+      - MQTT_PORT=1883
+      - REDIS_URL=redis://redis:6379/0
+      - SATELLITE_PUSH_URL_MARITIME=http://localhost:8001/api/maritime/alert
+      - SATELLITE_PUSH_URL_VESSEL=http://localhost:8001/api/vessel/alert
+    volumes:
+      - ./frontend:/app/frontend:ro
+
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: windfarm-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+
+  simulator:
+    build:
+      context: .
+      dockerfile: Dockerfile.simulator
+    container_name: windfarm-simulator
+    restart: unless-stopped
+    depends_on:
+      mosquitto:
+        condition: service_started
+    environment:
+      - MQTT_HOST=mosquitto
+      - MQTT_PORT=1883
+      - SIM_INTERVAL=10
+      - SIM_STEPS=0
+      - SIM_INJECT_COLLISION=false
+      - SIM_INJECT_ANCHOR=false
+
+volumes:
+  mongo_data:
+  redis_data:
+  mosquitto_data:
+  mosquitto_log:

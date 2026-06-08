@@ -1,0 +1,16 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements-sim.txt .
+RUN pip install --no-cache-dir -r requirements-sim.txt
+
+COPY simulator/ ./simulator/
+
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+CMD ["python", "-u", "simulator/ais_simulator.py", \
+     "--broker-host", "mosquitto", \
+     "--broker-port", "1883", \
+     "--interval", "10"]

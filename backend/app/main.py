@@ -5,6 +5,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -18,6 +19,8 @@ from app.services.anchor_guard import AnchorGuard
 from app.services.alarm_router import AlarmRouter
 
 app = FastAPI(title="海上风电场海缆保护与船舶碰撞预警系统")
+
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 app.add_middleware(
     CORSMiddleware,
